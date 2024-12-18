@@ -1,0 +1,16 @@
+.venv/
+Dockerfile
+.git/
+.github/
+node_modules/
+.vscode/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+.secrets.json
+notebooks/
+.env
+.env.*
