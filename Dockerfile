@@ -13,4 +13,7 @@ ADD . /app
 WORKDIR /app
 RUN uv sync --dev --group analysis --frozen
 
-CMD ["uv", "run", "streamlit", "run", "encampments.py"]
+# Open port 5000
+EXPOSE 5000
+
+CMD ["uv", "run", "streamlit", "run", "encampments.py", "--server.port", "5000"]
