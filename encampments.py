@@ -52,7 +52,13 @@ show_table = st.segmented_control(
 date_range = st.segmented_control(
     "Select Date Range",
     ["All Dates", "CY2024", "Most Recent 90 Days", "Most Recent 30 Days"],
-    default="All Dates",
+    default="Most Recent 90 Days",
+)
+
+smoothing = st.segmented_control(
+    "Location Smoothing",
+    ["None", "A Little", "More"],
+    default="A Little",
 )
 
 st.html(f"<p>Data ends on {last_date}</p>")
@@ -71,16 +77,28 @@ elif date_range == "Most Recent 30 Days":
     end_date = last_date
     start_date = end_date - datetime.timedelta(days=30)
 
+if smoothing == "None":
+    round_places = None
+elif smoothing == "A Little":
+    round_places = 3
+elif smoothing == "More":
+    round_places = 2
+
 
 start_date_str = start_date.strftime("%Y-%m-%d")
 end_date_str = end_date.strftime("%Y-%m-%d")
 
 limit = 15
 
-# Load the data
-encampments_result = conn.execute(
-    f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{encampments_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
-)
+# Load the encampments data
+if round_places is None:
+    encampments_result = conn.execute(
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{encampments_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
+else:
+    encampments_result = conn.execute(
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{encampments_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
 
 encampments_df = encampments_result.fetchdf()
 
@@ -90,9 +108,14 @@ if show_table == "Encampments":
     st.write(encampments_df)
 
 # Load the dumping data
-dumping_result = conn.execute(
-    f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{dumping_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
-)
+if round_places is None:
+    dumping_result = conn.execute(
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{dumping_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
+else:
+    dumping_result = conn.execute(
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{dumping_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
 
 dumping_df = dumping_result.fetchdf()
 
@@ -113,8 +136,10 @@ map = folium.Map(location=ship_canal_bridge_lat_lon, zoom_start=12)
 
 max_encampment_reports = float(encampments_df["ReportCount"].max())
 max_dumping_reports = float(dumping_df["ReportCount"].max())
+max_reports = max(max_encampment_reports, max_dumping_reports)
 
-pixel_size = 25
+pixel_size = 30
+
 
 for row in encampments_df.itertuples():
     latitude = t.cast(float, row.Latitude)
@@ -126,7 +151,8 @@ for row in encampments_df.itertuples():
         location=[latitude, longitude],
         popup=details,
         color="#0000ff",
-        radius=(report_count / max_encampment_reports) * pixel_size,
+        fill="#0000ff",
+        radius=(report_count / max_reports) * pixel_size,
     )
     marker.add_to(map)
 
@@ -140,7 +166,8 @@ for row in dumping_df.itertuples():
         location=[latitude, longitude],
         popup=details,
         color="#ff0000",
-        radius=(report_count / max_dumping_reports) * pixel_size,
+        fill="#ff0000",
+        radius=(report_count / max_reports) * pixel_size,
     )
     marker.add_to(map)
 
