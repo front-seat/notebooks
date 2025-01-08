@@ -11,11 +11,17 @@ downtown_seattle_lat_lon = (47.608013, -122.335167)
 greenlake_lat_lon = (47.681568, -122.341133)
 ship_canal_bridge_lat_lon = (47.65309, -122.32252)
 
-encampments_file_path = "data/csr-encampments.csv"
-dumping_file_path = "data/csr-dumping.csv"
+categories = {
+    "Encampments": "data/csr-encampments.csv",
+    "Dumping": "data/csr-dumping.csv",
+    "Graffiti": "data/csr-graffiti.csv",
+    "Abandoned Vehicles": "data/csr-abandoned-vehicle.csv",
+    "Public Litter": "data/csr-public-litter.csv",
+}
+
 conn = duckdb.connect()
 
-st.set_page_config(page_title="Encampments and Dumping in Seattle")
+st.set_page_config(page_title="Seattle Find It Fix It")
 
 st.markdown(
     """
@@ -33,7 +39,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Encampments and Dumping in Seattle")
+st.title("Seattle Find It Fix It")
 
 # Set it to wide mode
 
@@ -45,20 +51,20 @@ st.title("Encampments and Dumping in Seattle")
 
 show_table = st.segmented_control(
     "Show Table",
-    ["Encampments", "Dumping"],
-    default="Encampments",
+    list(categories.keys()),
+    default=list(categories.keys())[0],
 )
 
 date_range = st.segmented_control(
     "Select Date Range",
     ["All Dates", "CY2024", "Most Recent 90 Days", "Most Recent 30 Days"],
-    default="Most Recent 90 Days",
+    default="Most Recent 30 Days",
 )
 
 smoothing = st.segmented_control(
     "Location Smoothing",
     ["None", "A Little", "More"],
-    default="A Little",
+    default="None",
 )
 
 st.html(f"<p>Data ends on {last_date}</p>")
@@ -88,60 +94,41 @@ elif smoothing == "More":
 start_date_str = start_date.strftime("%Y-%m-%d")
 end_date_str = end_date.strftime("%Y-%m-%d")
 
-limit = 15
-
-# Load the encampments data
-if round_places is None:
-    encampments_result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{encampments_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
-    )
-else:
-    encampments_result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{encampments_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
-    )
-
-encampments_df = encampments_result.fetchdf()
-
-# Display the data
-if show_table == "Encampments":
-    st.html("<h3>Encampments (top 15 in timeframe)</h3>")
-    st.write(encampments_df)
-
-# Load the dumping data
-if round_places is None:
-    dumping_result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{dumping_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
-    )
-else:
-    dumping_result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{dumping_file_path}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
-    )
-
-dumping_df = dumping_result.fetchdf()
-
-# Display the data
-if show_table == "Dumping":
-    st.html("<h3>Dumping (top 15 in timeframe)</h3>")
-    st.write(dumping_df)
-
-
-# Place a small header above the map that says Encampments (Blue) and Dumping (Red)
-
-st.html(
-    '<h3>Encampments (<span style="color:#0000ff">blue</span>) and Dumping (<span style="color:#ff0000">red</span>)</h3>'
+# Count rows in the table matching dates
+assert isinstance(show_table, str)
+total_result = conn.execute(
+    f"SELECT COUNT(*) as TotalReports FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}'"
 )
+total_df = total_result.fetchdf()
+total_reports = int(total_df.iloc[0]["TotalReports"])
+
+# Load the data
+limit = 15
+if round_places is None:
+    result = conn.execute(
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
+else:
+    result = conn.execute(
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+    )
+
+# Get basic dataset
+df = result.fetchdf()
+max_reports = int(df["ReportCount"].max())
+
+
+st.html(f"<h3>{show_table} ({total_reports:,d} reports in timeframe)</h3>")
+st.write(df)
 
 # Create a map
 map = folium.Map(location=ship_canal_bridge_lat_lon, zoom_start=12)
 
-max_encampment_reports = float(encampments_df["ReportCount"].max())
-max_dumping_reports = float(dumping_df["ReportCount"].max())
-max_reports = max(max_encampment_reports, max_dumping_reports)
 
 pixel_size = 30
 
 
-for row in encampments_df.itertuples():
+for row in df.itertuples():
     latitude = t.cast(float, row.Latitude)
     longitude = t.cast(float, row.Longitude)
     location = t.cast(str, row.Location)
@@ -155,21 +142,5 @@ for row in encampments_df.itertuples():
         radius=(report_count / max_reports) * pixel_size,
     )
     marker.add_to(map)
-
-for row in dumping_df.itertuples():
-    latitude = t.cast(float, row.Latitude)
-    longitude = t.cast(float, row.Longitude)
-    location = t.cast(str, row.Location)
-    report_count = t.cast(int, row.ReportCount)
-    details = f"{location} ({report_count} dumping reports)"
-    marker = folium.CircleMarker(
-        location=[latitude, longitude],
-        popup=details,
-        color="#ff0000",
-        fill="#ff0000",
-        radius=(report_count / max_reports) * pixel_size,
-    )
-    marker.add_to(map)
-
 
 st_folium(map, returned_objects=[], height=700, width=700)
