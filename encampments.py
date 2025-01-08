@@ -133,7 +133,7 @@ for row in df.itertuples():
     longitude = t.cast(float, row.Longitude)
     location = t.cast(str, row.Location)
     report_count = t.cast(int, row.ReportCount)
-    details = f"{location} ({report_count} encampment reports)"
+    details = f"{location} ({report_count} {show_table} reports)"
     marker = folium.CircleMarker(
         location=[latitude, longitude],
         popup=details,
