@@ -20,6 +20,10 @@ categories = {
     "911 Pri 1 & 2": "data/911-pri1-pri2.csv",
 }
 
+supports_neighborhoods = set(
+    category for category in categories.keys() if category != "911 Pri 1 & 2"
+)
+
 conn = duckdb.connect()
 
 st.set_page_config(page_title="Seattle Find It Fix It")
@@ -74,6 +78,25 @@ smoothing = st.segmented_control(
 if smoothing is None:
     smoothing = "None"
 
+if show_table in supports_neighborhoods:
+    neighborhoods_result = conn.execute(
+        f"SELECT DISTINCT Neighborhood FROM read_csv('{categories[show_table]}')"
+    )
+    neighborhoods_df = neighborhoods_result.fetchdf()
+    # Get just the values from the "Neighborhood" column of the df
+    neighborhoods = neighborhoods_df["Neighborhood"].values
+    sorted_neighborhoods = list(sorted(n.title() for n in neighborhoods if n))
+    sorted_neighborhoods = ["(all)"] + sorted_neighborhoods
+    neighborhood = st.selectbox("Select Neighborhood", sorted_neighborhoods, index=0)
+else:
+    neighborhood = "(all)"
+
+neighborhood_clause = (
+    f"AND Neighborhood = '{neighborhood.upper()}'"
+    if neighborhood and neighborhood != "(all)"
+    else ""
+)
+
 st.html(f"<p>Data ends on {last_date}</p>")
 
 
@@ -104,7 +127,7 @@ end_date_str = end_date.strftime("%Y-%m-%d")
 # Count rows in the table matching dates
 assert isinstance(show_table, str)
 total_result = conn.execute(
-    f"SELECT COUNT(*) as TotalReports FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}'"
+    f"SELECT COUNT(*) as TotalReports FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause}"
 )
 total_df = total_result.fetchdf()
 total_reports = int(total_df.iloc[0]["TotalReports"])
@@ -113,11 +136,11 @@ total_reports = int(total_df.iloc[0]["TotalReports"])
 limit = 15
 if round_places is None:
     result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
     )
 else:
     result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
     )
 
 # Get basic dataset
