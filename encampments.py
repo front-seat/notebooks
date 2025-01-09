@@ -5,7 +5,6 @@ import duckdb
 import folium
 from streamlit_folium import st_folium
 
-
 last_date = datetime.date(2025, 1, 3)
 downtown_seattle_lat_lon = (47.608013, -122.335167)
 greenlake_lat_lon = (47.681568, -122.341133)
@@ -53,6 +52,19 @@ st.title("Seattle Find It Fix It")
 # - Calendar Year 2024
 # - Last 90 days
 # - Last 30 days
+
+show_kind = st.segmented_control(
+    "Display",
+    ["Top 15", "Everything"],
+    default="Top 15",
+)
+if show_kind == "Everything":
+    limit = None
+    limit_clause = ""
+else:
+    show_kind = "Top 15"
+    limit = 15
+    limit_clause = f"LIMIT {limit}"
 
 show_table = st.segmented_control(
     "Show Table",
@@ -133,22 +145,27 @@ total_df = total_result.fetchdf()
 total_reports = int(total_df.iloc[0]["TotalReports"])
 
 # Load the data
-limit = 15
 if round_places is None:
     result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC {limit_clause}"
     )
 else:
     result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC {limit_clause}"
     )
 
 # Get basic dataset
 df = result.fetchdf()
-max_reports = int(df["ReportCount"].max())
+try:
+    max_reports = int(df["ReportCount"].max())
+except ValueError:
+    max_reports = 1
 
 
-st.html(f"<h3>{show_table} ({total_reports:,d} reports in timeframe)</h3>")
+assert isinstance(show_kind, str)
+st.html(
+    f"<h3>{show_table} ({show_kind.lower()} from {total_reports:,d} reports in timeframe)</h3>"
+)
 st.write(df)
 
 # Create a map
@@ -172,5 +189,17 @@ for row in df.itertuples():
         radius=(report_count / max_reports) * pixel_size,
     )
     marker.add_to(map)
+
+# Create cluster markers that show the number of reports in the cluster, and
+# when zoomed in, show the individual reports
+marker_cluster = folium.plugins.MarkerCluster().add_to(map)
+for row in df.itertuples():
+    latitude = t.cast(float, row.Latitude)
+    longitude = t.cast(float, row.Longitude)
+    location = t.cast(str, row.Location)
+    report_count = t.cast(int, row.ReportCount)
+    details = f"{location} ({report_count} {show_table} reports)"
+    marker = folium.Marker(location=[latitude, longitude], popup=details)
+    marker.add_to(marker_cluster)
 
 st_folium(map, returned_objects=[], height=700, width=700)
