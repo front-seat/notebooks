@@ -17,6 +17,7 @@ categories = {
     "Graffiti": "data/csr-graffiti.csv",
     "Abandoned Vehicles": "data/csr-abandoned-vehicle.csv",
     "Public Litter": "data/csr-public-litter.csv",
+    "911 Pri 1 & 2": "data/911-pri1-pri2.csv",
 }
 
 conn = duckdb.connect()
@@ -54,18 +55,24 @@ show_table = st.segmented_control(
     list(categories.keys()),
     default=list(categories.keys())[0],
 )
+if show_table is None:
+    show_table = list(categories.keys())[0]
 
 date_range = st.segmented_control(
     "Select Date Range",
-    ["All Dates", "CY2024", "Most Recent 90 Days", "Most Recent 30 Days"],
+    ["All Dates", "CY2024+", "Most Recent 90 Days", "Most Recent 30 Days"],
     default="Most Recent 30 Days",
 )
+if date_range is None:
+    date_range = "Most Recent 30 Days"
 
 smoothing = st.segmented_control(
     "Location Smoothing",
     ["None", "A Little", "More"],
     default="None",
 )
+if smoothing is None:
+    smoothing = "None"
 
 st.html(f"<p>Data ends on {last_date}</p>")
 
@@ -73,7 +80,7 @@ st.html(f"<p>Data ends on {last_date}</p>")
 if date_range == "All Dates":
     start_date = datetime.date(2020, 1, 1)
     end_date = last_date
-elif date_range == "CY2024":
+elif date_range == "CY2024+":
     start_date = datetime.date(2024, 1, 1)
     end_date = last_date
 elif date_range == "Most Recent 90 Days":
@@ -106,11 +113,11 @@ total_reports = int(total_df.iloc[0]["TotalReports"])
 limit = 15
 if round_places is None:
     result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC LIMIT {limit}"
     )
 else:
     result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
+        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC LIMIT {limit}"
     )
 
 # Get basic dataset
