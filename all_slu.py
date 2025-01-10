@@ -11,6 +11,9 @@ downtown_seattle_lat_lon = (47.608013, -122.335167)
 greenlake_lat_lon = (47.681568, -122.341133)
 ship_canal_bridge_lat_lon = (47.65309, -122.32252)
 
+# South Lake Union min_lat, max_lat, min_lon, max_lon
+slu_bbox = (47.6184652174827, 47.6397271875236, -122.350357286111, -122.32332722972)
+
 categories = {
     "Encampment": ("data/csr-encampments.csv", "blue"),
     "Dumping": ("data/csr-dumping.csv", "green"),
@@ -18,6 +21,8 @@ categories = {
     "Abandoned Vehicle": ("data/csr-abandoned-vehicle.csv", "darkorange"),
     "Public Litter": ("data/csr-public-litter.csv", "darkslateblue"),
 }
+
+the_911_csv = "data/911-pri1-pri2.csv"
 
 all_csv_files = [filename for filename, _ in categories.values()]
 read_all_csvs_clause = f"read_csv([{", ".join(f"'{file}'" for file in all_csv_files)}])"
@@ -48,6 +53,7 @@ st.title("All Fix-It Data In SLU, Last 30 Days")
 color_guide = []
 for category, (_, color) in categories.items():
     color_guide.append(f'<span style="color: {color}">{category}</span>')
+color_guide.append('<span style="color: yellow">911 Calls</span>')
 color_html = ",&nbsp;".join(color_guide)
 color_html = f"<span>{color_html}</span>"
 st.html(color_html)
@@ -97,5 +103,33 @@ for row in df.itertuples():
     )
     marker.add_to(map)
 
+
+ll_neighborhood_clause = f"AND Latitude >= {slu_bbox[0]} AND Latitude <= {slu_bbox[1]} AND Longitude >= {slu_bbox[2]} AND Longitude <= {slu_bbox[3]}"
+result = conn.execute(
+    f"""
+    SELECT Latitude, Longitude, COUNT(*) AS ReportCount
+    FROM read_csv('{the_911_csv}')
+    WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}'
+    {ll_neighborhood_clause}
+    GROUP BY Latitude, Longitude
+    """
+)
+df = result.fetchdf()
+
+max_report_count = df["ReportCount"].max()
+
+for row in df.itertuples():
+    latitude = t.cast(float, row.Latitude)
+    longitude = t.cast(float, row.Longitude)
+    report_count = t.cast(int, row.ReportCount)
+    details = f"{report_count} 911 calls"
+    marker = folium.CircleMarker(
+        location=[latitude, longitude],
+        popup=details,
+        color="yellow",
+        fill="yellow",
+        radius=(report_count / max_report_count) * pixel_size,
+    )
+    marker.add_to(map)
 
 st_folium(map, returned_objects=[], height=700, width=700)
