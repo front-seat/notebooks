@@ -11,6 +11,7 @@ greenlake_lat_lon = (47.681568, -122.341133)
 ship_canal_bridge_lat_lon = (47.65309, -122.32252)
 
 categories = {
+    "All Fix-It Data": None,
     "Encampments": "data/csr-encampments.csv",
     "Dumping": "data/csr-dumping.csv",
     "Graffiti": "data/csr-graffiti.csv",
@@ -19,9 +20,16 @@ categories = {
     "911 Pri 1 & 2": "data/911-pri1-pri2.csv",
 }
 
+no_neighborhoods = {"911 Pri 1 & 2"}
+
 supports_neighborhoods = set(
-    category for category in categories.keys() if category != "911 Pri 1 & 2"
+    category for category in categories.keys() if category not in no_neighborhoods
 )
+
+all_csv_files = list(
+    v for k, v in categories.items() if v is not None and k not in no_neighborhoods
+)
+read_all_csvs_clause = f"read_csv([{", ".join(f"'{file}'" for file in all_csv_files)}])"
 
 conn = duckdb.connect()
 
@@ -56,23 +64,26 @@ st.title("Seattle Find It Fix It")
 show_kind = st.segmented_control(
     "Display",
     ["Top 15", "Everything"],
-    default="Top 15",
+    default="Everything",
 )
-if show_kind == "Everything":
-    limit = None
-    limit_clause = ""
-else:
-    show_kind = "Top 15"
+if show_kind == "Top 15":
     limit = 15
     limit_clause = f"LIMIT {limit}"
+else:
+    show_kind = "Everything"
+    limit = None
+    limit_clause = ""
 
-show_table = st.segmented_control(
+category = st.segmented_control(
     "Show Table",
     list(categories.keys()),
     default=list(categories.keys())[0],
 )
-if show_table is None:
-    show_table = list(categories.keys())[0]
+if category is None:
+    category = list(categories.keys())[0]
+csv_file: str | None = categories[category]
+
+read_csv_clause = f"read_csv('{csv_file}')" if csv_file else read_all_csvs_clause
 
 date_range = st.segmented_control(
     "Select Date Range",
@@ -90,16 +101,22 @@ smoothing = st.segmented_control(
 if smoothing is None:
     smoothing = "None"
 
-if show_table in supports_neighborhoods:
+if category in supports_neighborhoods:
     neighborhoods_result = conn.execute(
-        f"SELECT DISTINCT Neighborhood FROM read_csv('{categories[show_table]}')"
+        f"SELECT DISTINCT Neighborhood FROM {read_csv_clause}"
     )
     neighborhoods_df = neighborhoods_result.fetchdf()
     # Get just the values from the "Neighborhood" column of the df
     neighborhoods = neighborhoods_df["Neighborhood"].values
     sorted_neighborhoods = list(sorted(n.title() for n in neighborhoods if n))
     sorted_neighborhoods = ["(all)"] + sorted_neighborhoods
-    neighborhood = st.selectbox("Select Neighborhood", sorted_neighborhoods, index=0)
+    try:
+        index = sorted_neighborhoods.index("South Lake Union")
+    except ValueError:
+        index = 0
+    neighborhood = st.selectbox(
+        "Select Neighborhood", sorted_neighborhoods, index=index
+    )
 else:
     neighborhood = "(all)"
 
@@ -137,22 +154,27 @@ start_date_str = start_date.strftime("%Y-%m-%d")
 end_date_str = end_date.strftime("%Y-%m-%d")
 
 # Count rows in the table matching dates
-assert isinstance(show_table, str)
+assert isinstance(category, str)
 total_result = conn.execute(
-    f"SELECT COUNT(*) as TotalReports FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause}"
+    f"SELECT COUNT(*) as TotalReports FROM {read_csv_clause} WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause}"
 )
 total_df = total_result.fetchdf()
 total_reports = int(total_df.iloc[0]["TotalReports"])
 
 # Load the data
-if round_places is None:
-    result = conn.execute(
-        f"SELECT Location, Latitude, Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY Location, Latitude, Longitude ORDER BY COUNT(*) DESC {limit_clause}"
-    )
-else:
-    result = conn.execute(
-        f"SELECT ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount FROM read_csv('{categories[show_table]}') WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places}) ORDER BY COUNT(*) DESC {limit_clause}"
-    )
+select_clause = (
+    "ANY_VALUE(Location) as Location, AVG(Latitude) as Latitude, AVG(Longitude) as Longitude, COUNT(*) as ReportCount"
+    if round_places
+    else "Location, Latitude, Longitude, COUNT(*) as ReportCount"
+)
+group_by_clause = (
+    f"Location, ROUND(Latitude, {round_places}), ROUND(Longitude, {round_places})"
+    if round_places
+    else "Location, Latitude, Longitude"
+)
+
+statement = f"SELECT {select_clause} FROM {read_csv_clause} WHERE \"Created Date\" >= '{start_date_str}' AND \"Created Date\" <= '{end_date_str}' {neighborhood_clause} AND Latitude IS NOT NULL AND Longitude IS NOT NULL AND Latitude != 0 AND Longitude != 0 AND Latitude != -1 AND Longitude != -1 GROUP BY {group_by_clause} ORDER BY COUNT(*) DESC {limit_clause}"
+result = conn.execute(statement)
 
 # Get basic dataset
 df = result.fetchdf()
@@ -164,7 +186,7 @@ except ValueError:
 
 assert isinstance(show_kind, str)
 st.html(
-    f"<h3>{show_table} ({show_kind.lower()} from {total_reports:,d} reports in timeframe)</h3>"
+    f"<h3>{category} ({show_kind.lower()} from {total_reports:,d} reports in timeframe)</h3>"
 )
 st.write(df)
 
@@ -180,7 +202,7 @@ for row in df.itertuples():
     longitude = t.cast(float, row.Longitude)
     location = t.cast(str, row.Location)
     report_count = t.cast(int, row.ReportCount)
-    details = f"{location} ({report_count} {show_table} reports)"
+    details = f"{location} ({report_count} {category} reports)"
     marker = folium.CircleMarker(
         location=[latitude, longitude],
         popup=details,
@@ -198,7 +220,7 @@ for row in df.itertuples():
     longitude = t.cast(float, row.Longitude)
     location = t.cast(str, row.Location)
     report_count = t.cast(int, row.ReportCount)
-    details = f"{location} ({report_count} {show_table} reports)"
+    details = f"{location} ({report_count} {category} reports)"
     marker = folium.Marker(location=[latitude, longitude], popup=details)
     marker.add_to(marker_cluster)
 
