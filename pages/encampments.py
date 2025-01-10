@@ -64,23 +64,23 @@ st.title("Seattle Find It Fix It")
 show_kind = st.segmented_control(
     "Display",
     ["Top 15", "Everything"],
-    default="Everything",
+    default="Top 15",
 )
-if show_kind == "Top 15":
-    limit = 15
-    limit_clause = f"LIMIT {limit}"
-else:
-    show_kind = "Everything"
+if show_kind == "Everything":
     limit = None
     limit_clause = ""
+else:
+    show_kind = "Top 15"
+    limit = 15
+    limit_clause = f"LIMIT {limit}"
 
 category = st.segmented_control(
     "Show Table",
     list(categories.keys()),
-    default=list(categories.keys())[0],
+    default=list(categories.keys())[1],
 )
 if category is None:
-    category = list(categories.keys())[0]
+    category = list(categories.keys())[1]
 csv_file: str | None = categories[category]
 
 read_csv_clause = f"read_csv('{csv_file}')" if csv_file else read_all_csvs_clause
@@ -110,10 +110,7 @@ if category in supports_neighborhoods:
     neighborhoods = neighborhoods_df["Neighborhood"].values
     sorted_neighborhoods = list(sorted(n.title() for n in neighborhoods if n))
     sorted_neighborhoods = ["(all)"] + sorted_neighborhoods
-    try:
-        index = sorted_neighborhoods.index("South Lake Union")
-    except ValueError:
-        index = 0
+    index = 0
     neighborhood = st.selectbox(
         "Select Neighborhood", sorted_neighborhoods, index=index
     )
@@ -212,16 +209,5 @@ for row in df.itertuples():
     )
     marker.add_to(map)
 
-# Create cluster markers that show the number of reports in the cluster, and
-# when zoomed in, show the individual reports
-marker_cluster = folium.plugins.MarkerCluster().add_to(map)
-for row in df.itertuples():
-    latitude = t.cast(float, row.Latitude)
-    longitude = t.cast(float, row.Longitude)
-    location = t.cast(str, row.Location)
-    report_count = t.cast(int, row.ReportCount)
-    details = f"{location} ({report_count} {category} reports)"
-    marker = folium.Marker(location=[latitude, longitude], popup=details)
-    marker.add_to(marker_cluster)
 
 st_folium(map, returned_objects=[], height=700, width=700)
